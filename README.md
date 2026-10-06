@@ -113,9 +113,10 @@ toggle`/`open`. All process handling lives in the helper:
 
 ## Icon
 
-`assets/dsh.svg` is an **original whale-inspired silhouette** drawn for this
-plugin. It is intentionally *not* the official DeepSeek logo, to avoid
-shipping third-party trademarked artwork. Set the `glyph` setting if you
+`assets/dsh.svg` is the **DeepSeek whale logo**, used to identify the
+DeepSeek Harness service this plugin controls. The DeepSeek name and logo are
+trademarks of DeepSeek; this plugin is an independent community project and is
+not affiliated with or endorsed by DeepSeek. Set the `glyph` setting if you
 would rather use a Nerd Font glyph.
 
 ## License
