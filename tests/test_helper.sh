@@ -11,6 +11,10 @@ helper="$root/bin/omarchy-dsh"
 command -v python3 >/dev/null 2>&1 || { echo "note: python3 missing; skipping helper tests"; exit 0; }
 
 tmp="$(mktemp -d)"
+# Isolate runtime state so the suite never touches a real server.
+export XDG_RUNTIME_DIR="$tmp/runtime"
+export XDG_STATE_HOME="$tmp/state"
+mkdir -p "$XDG_RUNTIME_DIR" "$XDG_STATE_HOME"
 port=$(( 40000 + RANDOM % 20000 ))
 cleanup() {
   "$helper" stop --port "$port" >/dev/null 2>&1 || true
