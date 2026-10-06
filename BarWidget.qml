@@ -140,8 +140,6 @@ BarWidget {
     bar: root.bar
     text: root.glyph
     iconComponent: root.glyph === "" ? dshIcon : null
-    slotSize: Style.bar.statusSlot
-    fontSize: Style.font.caption
     opacity: root.busy ? 0.6 : (root.running ? 1.0 : root.idleOpacity)
     tooltipText: "DeepSeek Harness: " + root.statusText
       + (root.running ? " — " + root.dshHost + ":" + root.dshPort : "")
