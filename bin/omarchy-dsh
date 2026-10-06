@@ -1,0 +1,265 @@
+#!/usr/bin/env bash
+# omarchy-dsh — control the DeepSeek Harness web UI (`dsh web`) for the
+# Omarchy bar widget `devmercenario.dsh`.
+#
+# Usage:
+#   omarchy-dsh <start|stop|toggle|status|open|url> [options]
+#
+# Options:
+#   --bin <executable>   dsh executable to run (default: dsh)
+#   --host <host>        bind host (default: 127.0.0.1)
+#   --port <port>        bind port (default: 3080)
+#   --json               machine-readable output, for `status`
+#   -h, --help           show this help
+#
+# Runtime state lives in an owner-only directory under $XDG_RUNTIME_DIR so a
+# stale PID file can never point at somebody else's process.
+
+set -u
+
+DSH_BIN="${DSH_BIN:-dsh}"
+DSH_HOST="${DSH_HOST:-127.0.0.1}"
+DSH_PORT="${DSH_PORT:-3080}"
+
+verb=""
+json=0
+
+while (( $# > 0 )); do
+  case "$1" in
+    --bin)   DSH_BIN="${2:-}";  shift 2 ;;
+    --host)  DSH_HOST="${2:-}"; shift 2 ;;
+    --port)  DSH_PORT="${2:-}"; shift 2 ;;
+    --bin=*)  DSH_BIN="${1#*=}";  shift ;;
+    --host=*) DSH_HOST="${1#*=}"; shift ;;
+    --port=*) DSH_PORT="${1#*=}"; shift ;;
+    --json)  json=1; shift ;;
+    -h|--help) verb=help; shift ;;
+    -*) echo "omarchy-dsh: unknown option: $1" >&2; exit 2 ;;
+    *)
+      if [[ -z $verb ]]; then verb=$1;
+      else echo "omarchy-dsh: unexpected argument: $1" >&2; exit 2; fi
+      shift
+      ;;
+  esac
+done
+
+state_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/omarchy-dsh"
+state_base="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy-dsh"
+pid_file="$state_dir/web-$DSH_PORT.pid"
+pgid_file="$state_dir/web-$DSH_PORT.pgid"
+log_file="$state_base/web-$DSH_PORT.log"
+
+log() { printf 'omarchy-dsh: %s\n' "$*" >&2; }
+base_url() { printf 'http://%s:%s\n' "$DSH_HOST" "$DSH_PORT"; }
+probe_host() { [[ $DSH_HOST == "0.0.0.0" ]] && printf '127.0.0.1\n' || printf '%s\n' "$DSH_HOST"; }
+
+ensure_dirs() {
+  mkdir -p "$state_dir" "$state_base" 2>/dev/null || return 1
+  chmod 700 "$state_dir" "$state_base" 2>/dev/null || true
+}
+
+read_pid() {
+  [[ -r $pid_file ]] || return 1
+  local p; p=$(<"$pid_file")
+  [[ $p =~ ^[0-9]+$ ]] || return 1
+  printf '%s\n' "$p"
+}
+
+read_pgid() {
+  [[ -r $pgid_file ]] || return 1
+  local p; p=$(<"$pgid_file")
+  [[ $p =~ ^[0-9]+$ ]] || return 1
+  printf '%s\n' "$p"
+}
+
+# True when PID is a live process owned by us whose argv is `<...>/dsh ... web`.
+pid_is_our_dsh() {
+  local pid=$1
+  [[ -d /proc/$pid ]] || return 1
+  [[ "$(id -u)" == "$(stat -c %u "/proc/$pid" 2>/dev/null)" ]] || return 1
+  local -a args=() a has_dsh=0 has_web=0
+  while IFS= read -r -d '' a; do args+=("$a"); done < "/proc/$pid/cmdline" 2>/dev/null || return 1
+  (( ${#args[@]} > 0 )) || return 1
+  for a in "${args[@]}"; do
+    # `dsh` (shim/script) or the resolved node entry point
+    # `.../@deepseek-ai/dsh/lib/bin.js`. `omarchy-dsh` must never match.
+    [[ $a == dsh || $a == */dsh || $a == *deepseek-ai/dsh/* ]] && has_dsh=1
+    [[ $a == web ]] && has_web=1
+  done
+  (( has_dsh == 1 && has_web == 1 ))
+}
+
+# PID of the process listening on our port, if any.
+pid_on_port() {
+  local pid
+  command -v ss >/dev/null 2>&1 || return 1
+  pid=$(ss -ltnpH "sport = :$DSH_PORT" 2>/dev/null \
+    | grep -oE 'pid=[0-9]+' | head -n 1 | cut -d= -f2)
+  [[ -n $pid ]] || return 1
+  printf '%s\n' "$pid"
+}
+
+# PID of the running dsh web for THIS host/port. The port owner is
+# authoritative, so two instances on different ports never cross wires; the
+# PID file is only consulted while the port is not up yet (a slow startup).
+find_running_pid() {
+  local pid owner
+  owner=$(pid_on_port || true)
+  if [[ -n $owner ]] && pid_is_our_dsh "$owner"; then printf '%s\n' "$owner"; return 0; fi
+  if ! port_open; then
+    if pid=$(read_pid) && pid_is_our_dsh "$pid"; then printf '%s\n' "$pid"; return 0; fi
+  fi
+  return 1
+}
+
+port_open() {
+  (exec 3<>"/dev/tcp/$(probe_host)/${DSH_PORT}") 2>/dev/null || return 1
+  exec 3>&- 3<&- 2>/dev/null || true
+  return 0
+}
+
+is_running() { find_running_pid >/dev/null 2>&1 || port_open; }
+
+start() {
+  ensure_dirs || { log "error: cannot create state directory"; return 1; }
+
+  local cur
+  if cur=$(find_running_pid); then
+    log "already running (pid=$cur) at $(base_url)"
+    return 0
+  fi
+  if port_open; then
+    log "already listening at $(base_url)"
+    return 0
+  fi
+
+  command -v "$DSH_BIN" >/dev/null 2>&1 || { log "error: '$DSH_BIN' not found in PATH"; return 127; }
+
+  rm -f "$pid_file" "$pgid_file"
+  : > "$log_file"
+
+  # New session => its own process group, so stop can signal the whole tree
+  # without ever reaching this script's group. The child records its own PID
+  # (preserved across exec) before replacing itself with dsh.
+  setsid --fork bash -c '
+    echo $$ > "$1"
+    echo $$ > "$2"
+    exec "$3" web --no-open --host "$4" --port "$5"
+  ' omarchy-dsh "$pid_file" "$pgid_file" "$DSH_BIN" "$DSH_HOST" "$DSH_PORT" \
+    >>"$log_file" 2>&1 </dev/null &
+
+  local i pid=""
+  for i in $(seq 1 150); do
+    if port_open; then
+      pid=$(find_running_pid || true)
+      [[ -n $pid ]] && printf '%s\n' "$pid" > "$pid_file"
+      log "started${pid:+ (pid=$pid)} at $(base_url)"
+      return 0
+    fi
+    if [[ -r $pid_file ]]; then
+      pid=$(<"$pid_file")
+      if [[ $pid =~ ^[0-9]+$ ]] && ! kill -0 "$pid" 2>/dev/null; then
+        log "error: dsh web exited during startup; see $log_file"
+        rm -f "$pid_file" "$pgid_file"
+        return 1
+      fi
+    fi
+    sleep 0.1
+  done
+
+  if pid=$(find_running_pid); then
+    log "starting (pid=$pid); port not open yet, see $log_file"
+    return 0
+  fi
+  log "error: timed out waiting for dsh web; see $log_file"
+  return 1
+}
+
+stop() {
+  local pid="" pgid=""
+  pid=$(find_running_pid || true)
+  if [[ -z $pid ]]; then
+    rm -f "$pid_file" "$pgid_file"
+    log "not running"
+    return 0
+  fi
+
+  pgid=$(read_pgid || true)
+  [[ -n $pgid ]] || pgid=$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ')
+
+  log "stopping (pid=$pid${pgid:+, pgid=$pgid})"
+  if [[ -n $pgid && $pgid =~ ^[0-9]+$ && $pgid != "$$" ]]; then
+    kill -TERM -- "-$pgid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
+  else
+    kill -TERM "$pid" 2>/dev/null || true
+  fi
+
+  local i
+  for i in $(seq 1 60); do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.1
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    log "did not exit on SIGTERM; sending SIGKILL"
+    if [[ -n $pgid && $pgid =~ ^[0-9]+$ ]]; then
+      kill -KILL -- "-$pgid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
+    else
+      kill -KILL "$pid" 2>/dev/null || true
+    fi
+  fi
+
+  rm -f "$pid_file" "$pgid_file"
+  return 0
+}
+
+toggle() { if is_running; then stop; else start; fi; }
+
+status() {
+  local pid="" up=0
+  pid=$(find_running_pid || true)
+  [[ -n $pid ]] && up=1
+  (( up == 0 )) && port_open && up=2
+
+  if (( json )); then
+    local running=false pid_json=null
+    (( up > 0 )) && running=true
+    [[ -n $pid ]] && pid_json=$pid
+    printf '{"running":%s,"pid":%s,"host":"%s","port":%s,"url":"%s"}\n' \
+      "$running" "$pid_json" "$DSH_HOST" "$DSH_PORT" "$(base_url)"
+  elif (( up > 0 )); then
+    printf 'running pid=%s url=%s\n' "${pid:--}" "$(base_url)"
+  else
+    printf 'stopped url=%s\n' "$(base_url)"
+  fi
+
+  (( up > 0 ))
+}
+
+open_url() {
+  local u
+  # dsh prints a tokenized URL to its log; prefer it over the bare base URL.
+  u=$(grep -oE 'https?://[^[:space:]]+' "$log_file" 2>/dev/null | tail -n 1 || true)
+  [[ -n $u ]] || u=$(base_url)
+  if command -v xdg-open >/dev/null 2>&1; then
+    ( xdg-open "$u" >/dev/null 2>&1 & )
+    log "opened $u"
+    return 0
+  fi
+  log "xdg-open not found; open $u manually"
+  return 1
+}
+
+usage() {
+  sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'
+}
+
+case "$verb" in
+  start)  start ;;
+  stop)   stop ;;
+  toggle) toggle ;;
+  status) status ;;
+  open)   open_url ;;
+  url)    base_url ;;
+  help|"") usage; [[ -z $verb ]] && exit 2 || exit 0 ;;
+  *) echo "omarchy-dsh: unknown command: $verb" >&2; usage >&2; exit 2 ;;
+esac

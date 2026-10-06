@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 1,
+  "id": "devmercenario.dsh",
+  "name": "DeepSeek Harness",
+  "version": "1.0.0",
+  "author": "devmercenario",
+  "license": "MIT",
+  "homepage": "https://github.com/devmercenario/omarchy-dsh",
+  "description": "Start, stop, and open the DeepSeek Harness web UI (dsh web) from one Omarchy bar icon.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "DeepSeek Harness",
+    "description": "Toggle the dsh web server. Full-color icon while it runs, dimmed while it is stopped.",
+    "category": "AI",
+    "aliases": ["dsh", "deepseek"],
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "dshBin": "dsh",
+      "host": "127.0.0.1",
+      "port": 3080,
+      "refreshIntervalSec": 5,
+      "idleOpacity": 0.35,
+      "glyph": ""
+    },
+    "schema": [
+      {
+        "key": "dshBin",
+        "type": "string",
+        "label": "dsh executable",
+        "description": "The dsh command to run. Must be on PATH.",
+        "defaultValue": "dsh"
+      },
+      {
+        "key": "host",
+        "type": "string",
+        "label": "Bind host",
+        "description": "Address dsh web listens on.",
+        "defaultValue": "127.0.0.1"
+      },
+      {
+        "key": "port",
+        "type": "integer",
+        "label": "Web port",
+        "min": 1,
+        "max": 65535,
+        "step": 1,
+        "defaultValue": 3080
+      },
+      {
+        "key": "refreshIntervalSec",
+        "type": "integer",
+        "label": "Refresh interval (seconds)",
+        "min": 2,
+        "max": 300,
+        "step": 1,
+        "defaultValue": 5
+      },
+      {
+        "key": "idleOpacity",
+        "type": "number",
+        "label": "Idle icon opacity",
+        "description": "Opacity of the icon while dsh web is stopped.",
+        "defaultValue": 0.35
+      },
+      {
+        "key": "glyph",
+        "type": "string",
+        "label": "Glyph override",
+        "description": "Optional Nerd Font glyph to use instead of the bundled icon.",
+        "defaultValue": ""
+      }
+    ]
+  }
+}
