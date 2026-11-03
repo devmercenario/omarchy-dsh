@@ -70,9 +70,9 @@ The plugin stores nothing outside `$XDG_RUNTIME_DIR/omarchy-dsh/` and
 Shell IPC is also available:
 
 ```sh
-omarchy-shell shell call devmercenario.dsh toggle ''
-omarchy-shell shell call devmercenario.dsh open ''
-omarchy-shell shell call devmercenario.dsh status ''
+omarchy-shell devmercenario.dsh toggle
+omarchy-shell devmercenario.dsh open
+omarchy-shell devmercenario.dsh status
 ```
 
 A helper CLI ships with the plugin for scripting and troubleshooting:
