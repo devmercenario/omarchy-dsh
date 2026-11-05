@@ -124,8 +124,12 @@ BarWidget {
   Component {
     id: dshIcon
 
+    // BarIconContent keeps an Image's declared size and scales it to the
+    // bar icon size from its painted bounds, so the Image must size itself:
+    // anchoring it to the unsized Loader paints it at 0x0.
     Image {
-      anchors.fill: parent
+      width: button.iconSize
+      height: button.iconSize
       source: root.pluginDir + "/assets/dsh.svg"
       sourceSize.width: 64
       sourceSize.height: 64

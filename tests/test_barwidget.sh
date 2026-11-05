@@ -33,6 +33,15 @@ grep -q 'moduleName: "devmercenario.dsh"' "$qml" || fail "moduleName does not ma
 grep -q 'IpcHandler' "$qml" || fail "no IpcHandler for shell IPC"
 grep -q 'BarIconButton' "$qml" || fail "no BarIconButton"
 grep -q 'assets/dsh.svg' "$qml" || fail "bundled icon is not referenced"
+# The icon component must declare its own size; one anchored to its unsized
+# Loader paints at 0x0 and disappears from the bar.
+python3 - "$qml" <<'PY' || fail "bundled icon Image must declare width/height, not anchors.fill"
+import re, sys
+src = open(sys.argv[1], encoding="utf-8").read()
+m = re.search(r"id:\s*dshIcon(.*?)source:", src, re.S)
+if not m or "anchors.fill" in m.group(1) or "width:" not in m.group(1):
+    sys.exit(1)
+PY
 grep -q 'runVerb("toggle")' "$qml" || fail "left click does not toggle the server"
 grep -q 'runVerb("open")' "$qml" || fail "no open action"
 grep -q 'idleOpacity' "$qml" || fail "no idle opacity state"
